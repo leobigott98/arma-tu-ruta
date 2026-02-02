@@ -11,9 +11,18 @@ import {
   Text,
   View,
 } from "react-native";
-import { PHOTOS, GAME_RULES, LANDMARKS, PhotoItem, LandmarkId } from "../game/config";
+import {
+  PHOTOS,
+  GAME_RULES,
+  LANDMARKS,
+  PhotoItem,
+  LandmarkId,
+} from "../game/config";
 
-type PlacedMap = Record<string, { placed: boolean; lockedTo: LandmarkId | null }>;
+type PlacedMap = Record<
+  string,
+  { placed: boolean; lockedTo: LandmarkId | null }
+>;
 
 function shuffle<T>(arr: T[]) {
   const a = [...arr];
@@ -24,10 +33,6 @@ function shuffle<T>(arr: T[]) {
   return a;
 }
 
-function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n));
-}
-
 function distance(ax: number, ay: number, bx: number, by: number) {
   const dx = ax - bx;
   const dy = ay - by;
@@ -35,21 +40,67 @@ function distance(ax: number, ay: number, bx: number, by: number) {
 }
 
 /**
- * Small draggable component (absolute positioned)
+ * For ANY showCount, compute rows that look good:
+ * - Choose a max number of columns based on n.
+ * - Fill rows with that many columns, last row centered.
+ *
+ * You can tune MAX_COLS_CAP for aesthetics.
  */
+function getRowCountsAny(n: number) {
+  if (n <= 0) return [];
+  // A nice cap for portrait kiosk (keeps squares big)
+  const MAX_COLS_CAP = 4;
+
+  // Start with sqrt-based cols, clamp to [3..MAX_COLS_CAP] for nicer look
+  const approx = Math.ceil(Math.sqrt(n));
+  const cols = Math.max(4, Math.min(MAX_COLS_CAP, approx));
+
+  const rows: number[] = [];
+  let remaining = n;
+  while (remaining > 0) {
+    rows.push(Math.min(cols, remaining));
+    remaining -= cols;
+  }
+  return rows;
+}
+
+type Slot = {
+  id: string; // photo id
+  x: number; // absolute screen coords
+  y: number;
+  size: number;
+};
+
+const BORDER_COLORS = [
+  "#0B2B6D",
+  "#E53935",
+  "#F2C200",
+  "#E67E22",
+  "#00ACC1",
+  "#4CAF50",
+  "#8E44AD",
+];
+
 function DraggablePhoto(props: {
   item: PhotoItem;
   size: number;
   startPos: { x: number; y: number };
   disabled: boolean;
-  onDrop: (item: PhotoItem, center: { x: number; y: number }, reset: () => void, snapTo: (x: number, y: number) => void) => void;
+  onDrop: (
+    item: PhotoItem,
+    center: { x: number; y: number },
+    size: number,
+    reset: () => void,
+    snapTo: (x: number, y: number) => void,
+  ) => void;
 }) {
   const { item, size, startPos, disabled, onDrop } = props;
 
-  const pan = useRef(new Animated.ValueXY({ x: startPos.x, y: startPos.y })).current;
+  const pan = useRef(
+    new Animated.ValueXY({ x: startPos.x, y: startPos.y }),
+  ).current;
 
   useEffect(() => {
-    // If startPos changes (new round), reset it
     pan.setValue({ x: startPos.x, y: startPos.y });
   }, [startPos.x, startPos.y]);
 
@@ -75,7 +126,6 @@ function DraggablePhoto(props: {
         onStartShouldSetPanResponder: () => !disabled,
         onMoveShouldSetPanResponder: () => !disabled,
         onPanResponderGrant: () => {
-          // “Pick up”
           pan.setOffset({ x: (pan.x as any)._value, y: (pan.y as any)._value });
           pan.setValue({ x: 0, y: 0 });
         },
@@ -89,14 +139,25 @@ function DraggablePhoto(props: {
           const y = (pan.y as any)._value;
           const center = { x: x + size / 2, y: y + size / 2 };
 
-          onDrop(item, center, reset, snapTo);
+          onDrop(item, center, size, reset, snapTo);
         },
       }),
-    [disabled, item.id, size, startPos.x, startPos.y]
+    [disabled, item.id, size, startPos.x, startPos.y],
   );
 
   return (
-    <Animated.View style={[styles.photo, { width: size, height: size, transform: pan.getTranslateTransform() }]} {...responder.panHandlers}>
+    <Animated.View
+      style={[
+        styles.photo,
+        {
+          width: size,
+          height: size,
+          transform: pan.getTranslateTransform(),
+          opacity: disabled ? 0.92 : 1,
+        },
+      ]}
+      {...responder.panHandlers}
+    >
       <Image source={item.source} style={styles.photoImg} />
     </Animated.View>
   );
@@ -105,8 +166,10 @@ function DraggablePhoto(props: {
 export default function GameScreen(props: { onExitToStart: () => void }) {
   const { onExitToStart } = props;
 
-  const [mapLayout, setMapLayout] = useState<LayoutRectangle | null>(null);
-  const [trayLayout, setTrayLayout] = useState<LayoutRectangle | null>(null);
+  const [mapAreaLayout, setMapAreaLayout] = useState<LayoutRectangle | null>(
+    null,
+  );
+  const [gridLayout, setGridLayout] = useState<LayoutRectangle | null>(null);
 
   const [secondsLeft, setSecondsLeft] = useState(GAME_RULES.seconds);
   const [mistakesLeft, setMistakesLeft] = useState(GAME_RULES.maxMistakes);
@@ -114,46 +177,40 @@ export default function GameScreen(props: { onExitToStart: () => void }) {
   const [roundPhotos, setRoundPhotos] = useState<PhotoItem[]>([]);
   const [placed, setPlaced] = useState<PlacedMap>({});
   const [status, setStatus] = useState<"playing" | "win" | "lose">("playing");
+  const [requiredToWin, setRequiredToWin] = useState(
+    GAME_RULES.requiredCorrect,
+  );
 
-  const [requiredToWin, setRequiredToWin] = useState(GAME_RULES.requiredCorrect);
+  const overlayAnim = useRef(new Animated.Value(0)).current;
 
-  // Debug helper: tap map to log normalized coordinates
+  useEffect(() => {
+    if (status === "win" || status === "lose") {
+      overlayAnim.setValue(0);
+      Animated.parallel([
+        Animated.timing(overlayAnim, {
+          toValue: 1,
+          duration: 180,
+          useNativeDriver: true,
+        }),
+        Animated.spring(overlayAnim, {
+          toValue: 1,
+          friction: 6,
+          tension: 90,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+  }, [status]);
+
+  // Debug tap-to-log coords inside map area
   const DEBUG_PICK_TARGETS = true;
 
-  const photoSize = 140; // tweak for your kiosk resolution
-
-  const startPositions = useMemo(() => {
-    if (!trayLayout) return {};
-    // Arrange photos in a row/grid inside the tray area
-    const cols = 5;
-    const gap = 18;
-    const usableW = trayLayout.width;
-    const cellW = usableW / cols;
-
-    const baseY = trayLayout.y + (trayLayout.height - photoSize) / 2;
-
-    const pos: Record<string, { x: number; y: number }> = {};
-    roundPhotos.forEach((p, i) => {
-      const col = i % cols;
-      const x = trayLayout.x + col * cellW + (cellW - photoSize) / 2;
-      pos[p.id] = { x: x + clamp(gap, 0, 999), y: baseY };
-    });
-    return pos;
-  }, [trayLayout, roundPhotos]);
-
-  const correctPlacedCount = useMemo(() => {
-    return roundPhotos.reduce((acc, p) => {
-      if (!p.landmarkId) return acc;
-      if (placed[p.id]?.placed) return acc + 1;
-      return acc;
-    }, 0);
-  }, [roundPhotos, placed]);
-
-  // Start a fresh round
   const newRound = () => {
-    const picked = shuffle(PHOTOS).slice(0, GAME_RULES.showCount);
+    const count = Math.max(1, Math.min(GAME_RULES.showCount, PHOTOS.length));
+    const picked = shuffle(PHOTOS).slice(0, count);
+
     setRoundPhotos(picked);
-    setRequiredToWin(picked.length);
+    setRequiredToWin(GAME_RULES.requiredCorrect);
 
     const init: PlacedMap = {};
     picked.forEach((p) => (init[p.id] = { placed: false, lockedTo: null }));
@@ -171,14 +228,10 @@ export default function GameScreen(props: { onExitToStart: () => void }) {
   // Timer
   useEffect(() => {
     if (status !== "playing") return;
-
-    const t = setInterval(() => {
-      setSecondsLeft((s) => {
-        if (s <= 1) return 0;
-        return s - 1;
-      });
-    }, 1000);
-
+    const t = setInterval(
+      () => setSecondsLeft((s) => (s <= 1 ? 0 : s - 1)),
+      1000,
+    );
     return () => clearInterval(t);
   }, [status]);
 
@@ -187,43 +240,100 @@ export default function GameScreen(props: { onExitToStart: () => void }) {
     if (secondsLeft <= 0) setStatus("lose");
   }, [secondsLeft, status]);
 
+  const correctPlacedCount = useMemo(() => {
+    return roundPhotos.reduce(
+      (acc, p) => (placed[p.id]?.placed ? acc + 1 : acc),
+      0,
+    );
+  }, [roundPhotos, placed]);
+
   useEffect(() => {
     if (status !== "playing") return;
-
-    if (correctPlacedCount >= requiredToWin) {
-      setStatus("win");
-    }
-  }, [correctPlacedCount, status]);
+    if (correctPlacedCount >= requiredToWin) setStatus("win");
+  }, [correctPlacedCount, requiredToWin, status]);
 
   useEffect(() => {
     if (status === "win" || status === "lose") {
-      const timeout = setTimeout(() => {
-        // Back to start screen OR just restart round — your choice.
-        onExitToStart();
-      }, 2500);
+      const timeout = setTimeout(() => onExitToStart(), 5000);
       return () => clearTimeout(timeout);
     }
-  }, [status]);
+  }, [status, onExitToStart]);
+
+  // --- Dynamic grid slots (ABSOLUTE COORDS) ---
+  const rowCounts = useMemo(
+    () => getRowCountsAny(roundPhotos.length),
+    [roundPhotos.length],
+  );
+
+  const slots = useMemo<Slot[]>(() => {
+    if (!gridLayout) return [];
+    if (roundPhotos.length === 0) return [];
+
+    const padding = 22;
+    const gap = 66;
+
+    const innerW = gridLayout.width - padding * 2;
+    const innerH = gridLayout.height - padding * 2;
+
+    const maxCols = Math.max(...rowCounts);
+    const rows = rowCounts.length;
+
+    const cellW = (innerW - gap * (maxCols - 1)) / maxCols;
+    const cellH = (innerH - gap * (rows - 1)) / rows;
+
+    // Square cards, capped for portrait kiosk aesthetics
+    const size = Math.max(110, Math.min(cellW, cellH, 210));
+
+    const result: Slot[] = [];
+    let idx = 0;
+
+    rowCounts.forEach((countInRow, row) => {
+      const rowWidth = countInRow * size + gap * (countInRow - 1);
+      const startX = gridLayout.x + padding + (innerW - rowWidth) / 2;
+      const y = gridLayout.y + padding + row * (size + gap);
+
+      for (let col = 0; col < countInRow; col++) {
+        const photo = roundPhotos[idx++];
+        if (!photo) break;
+        const x = startX + col * (size + gap);
+        result.push({ id: photo.id, x, y, size });
+      }
+    });
+
+    return result;
+  }, [gridLayout, roundPhotos, rowCounts]);
+
+  const startPositions = useMemo(() => {
+    const pos: Record<string, { x: number; y: number }> = {};
+    slots.forEach((s) => (pos[s.id] = { x: s.x, y: s.y }));
+    return pos;
+  }, [slots]);
+
+  const slotSizeById = useMemo(() => {
+    const m = new Map<string, number>();
+    slots.forEach((s) => m.set(s.id, s.size));
+    return m;
+  }, [slots]);
 
   const handleDrop = (
     item: PhotoItem,
     center: { x: number; y: number },
+    size: number,
     reset: () => void,
-    snapTo: (x: number, y: number) => void
+    snapTo: (x: number, y: number) => void,
   ) => {
-    if (!mapLayout || status !== "playing") return reset();
+    if (!mapAreaLayout || status !== "playing") return reset();
     if (placed[item.id]?.placed) return;
 
-    // If decoy: always reset (optionally count mistake if dropped near a target)
     const targetsAbs = LANDMARKS.map((t) => {
-      const tx = mapLayout.x + t.x * mapLayout.width;
-      const ty = mapLayout.y + t.y * mapLayout.height;
-      const r = t.radius * Math.min(mapLayout.width, mapLayout.height);
+      const tx = mapAreaLayout.x + t.x * mapAreaLayout.width;
+      const ty = mapAreaLayout.y + t.y * mapAreaLayout.height;
+      const r = t.radius * Math.min(mapAreaLayout.width, mapAreaLayout.height);
       return { id: t.id, tx, ty, r };
     });
 
-    // Find nearest target if within radius
-    let hit: { id: LandmarkId; tx: number; ty: number; r: number } | null = null;
+    let hit: { id: LandmarkId; tx: number; ty: number; r: number } | null =
+      null;
     for (const t of targetsAbs) {
       if (distance(center.x, center.y, t.tx, t.ty) <= t.r) {
         hit = t as any;
@@ -231,17 +341,12 @@ export default function GameScreen(props: { onExitToStart: () => void }) {
       }
     }
 
-    if (!hit) {
-      // dropped somewhere else: no penalty, just reset
-      return reset();
-    }
+    if (!hit) return reset();
 
-    // Dropped on a target
     const isCorrect = item.landmarkId === hit.id;
 
     if (isCorrect) {
-      // snap top-left so image centers on target
-      snapTo(hit.tx - photoSize / 2, hit.ty - photoSize / 2);
+      snapTo(hit.tx - size / 2, hit.ty - size / 2);
       setPlaced((prev) => ({
         ...prev,
         [item.id]: { placed: true, lockedTo: hit!.id },
@@ -249,38 +354,48 @@ export default function GameScreen(props: { onExitToStart: () => void }) {
       return;
     }
 
-    // Wrong target (or decoy on a target): mistake + reset
     setMistakesLeft((m) => {
       const next = m - 1;
-      if (next <= 0) {
-        setStatus("lose");
-      }
+      if (next <= 0) setStatus("lose");
       return next;
     });
+
     reset();
   };
 
   return (
     <View style={styles.root}>
-      <View style={styles.topBar}>
-        <Text style={styles.topText}>Tiempo: {secondsLeft}s</Text>
-        <Text style={styles.topText}>Intentos: {mistakesLeft}</Text>
-      </View>
-
-      <View
-        style={styles.mapWrap}
-        onLayout={(e) => setMapLayout(e.nativeEvent.layout)}
+      <ImageBackground
+        source={require("../../assets/map_v2.png")} // change file name to map or map_v2 as needed
+        style={styles.bg}
+        resizeMode="stretch"
       >
-        <ImageBackground
-          source={require("../../assets/map.png")}
-          style={styles.mapBg}
-          resizeMode="contain"
+        {/* HEADER INSIDE BG */}
+        <View style={styles.header}>
+          {/* <Text style={styles.title}>ARMA TU RUTA</Text> */}
+
+          <View style={styles.statsRow}>
+            <View style={styles.statPill}>
+              <Text style={styles.statLabel}>TIEMPO</Text>
+              <Text style={styles.statValue}>{secondsLeft}s</Text>
+            </View>
+
+            {/* <View style={styles.statPill}>
+              <Text style={styles.statLabel}>INTENTOS</Text>
+              <Text style={styles.statValue}>{mistakesLeft}</Text>
+            </View> */}
+          </View>
+        </View>
+
+        {/* MAP AREA: coordinate space for landmarks */}
+        <View
+          style={styles.mapArea}
+          onLayout={(e) => setMapAreaLayout(e.nativeEvent.layout)}
         >
-          {/* Optional: show target circles for debugging */}
-          {mapLayout &&
+          {mapAreaLayout &&
             LANDMARKS.map((t) => {
-              const left = t.x * mapLayout.width;
-              const top = t.y * mapLayout.height;
+              const left = t.x * mapAreaLayout.width;
+              const top = t.y * mapAreaLayout.height;
               return (
                 <View
                   key={t.id}
@@ -296,90 +411,200 @@ export default function GameScreen(props: { onExitToStart: () => void }) {
               );
             })}
 
-          {DEBUG_PICK_TARGETS && mapLayout && (
+          {DEBUG_PICK_TARGETS && mapAreaLayout && (
             <Pressable
               style={StyleSheet.absoluteFill}
               onPress={(ev) => {
-                const x = ev.nativeEvent.locationX / mapLayout.width;
-                const y = ev.nativeEvent.locationY / mapLayout.height;
-                console.log("TARGET COORD:", { x: Number(x.toFixed(4)), y: Number(y.toFixed(4)) });
+                const x = ev.nativeEvent.locationX / mapAreaLayout.width;
+                const y = ev.nativeEvent.locationY / mapAreaLayout.height;
+                console.log("TARGET COORD:", {
+                  x: Number(x.toFixed(4)),
+                  y: Number(y.toFixed(4)),
+                });
               }}
             />
           )}
-        </ImageBackground>
-      </View>
-
-      <View
-        style={styles.tray}
-        onLayout={(e) => setTrayLayout(e.nativeEvent.layout)}
-      >
-        <Text style={styles.trayTitle}>Arrastra las fotos</Text>
-      </View>
-
-      {/* Draggables must be rendered on top, absolute */}
-      {trayLayout &&
-        mapLayout &&
-        roundPhotos.map((p) => (
-          <DraggablePhoto
-            key={p.id}
-            item={p}
-            size={photoSize}
-            startPos={startPositions[p.id] ?? { x: 0, y: 0 }}
-            disabled={status !== "playing" || placed[p.id]?.placed}
-            onDrop={handleDrop}
-          />
-        ))}
-
-      {(status === "win" || status === "lose") && (
-        <View style={styles.overlay}>
-          <Text style={styles.overlayText}>
-            {status === "win" ? "¡Ganaste!" : "Perdiste"}
-          </Text>
-          <Text style={styles.overlaySub}>
-            {status === "win" ? "Ruta armada correctamente." : "Intenta otra vez."}
-          </Text>
         </View>
-      )}
 
-      {/* In-kiosk you might not want this, but useful while testing */}
-      <Pressable style={styles.resetBtn} onPress={newRound}>
-        <Text style={styles.resetText}>Reiniciar</Text>
-      </Pressable>
+        {/* GRID PANEL */}
+        <View
+          style={styles.gridPanel}
+          onLayout={(e) => setGridLayout(e.nativeEvent.layout)}
+        >
+          {gridLayout &&
+            slots.map((s, idx) => (
+              <View
+                key={s.id}
+                style={[
+                  styles.gridSlot,
+                  {
+                    position: "absolute",
+                    left: s.x - gridLayout.x,
+                    top: s.y - gridLayout.y,
+                    width: s.size,
+                    height: s.size,
+                    //borderColor: BORDER_COLORS[idx % BORDER_COLORS.length],
+                  },
+                ]}
+              />
+            ))}
+        </View>
+
+        {/* DRAGGABLE PHOTOS */}
+        {gridLayout &&
+          mapAreaLayout &&
+          roundPhotos.map((p) => (
+            <DraggablePhoto
+              key={p.id}
+              item={p}
+              size={slotSizeById.get(p.id) ?? 160}
+              startPos={startPositions[p.id] ?? { x: 0, y: 0 }}
+              disabled={status !== "playing" || placed[p.id]?.placed}
+              onDrop={handleDrop}
+            />
+          ))}
+
+        {(status === "win" || status === "lose") && (
+          <View style={styles.overlay}>
+            <Animated.View
+              style={[
+                styles.overlayCard,
+                {
+                  opacity: overlayAnim,
+                  transform: [
+                    {
+                      scale: overlayAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0.92, 1],
+                      }),
+                    },
+                  ],
+                },
+              ]}
+            >
+              <View
+                style={[
+                  styles.overlayBadge,
+                  status === "win" ? styles.badgeWin : styles.badgeLose,
+                ]}
+              >
+                <Text style={styles.overlayBadgeIcon}>
+                  {status === "win" ? "✓" : "⏱"}
+                </Text>
+              </View>
+
+              <Text style={styles.overlayTitle}>
+                {status === "win" ? "¡Ganaste!" : "Se acabó el tiempo"}
+              </Text>
+
+              <Text style={styles.overlayMessage}>
+                {status === "win"
+                  ? "Ruta armada correctamente."
+                  : "Intenta otra vez y arrastra las fotos al lugar correcto."}
+              </Text>
+
+              {/* ✅ Score progress */}
+              <View style={styles.scoreRow}>
+                <View style={styles.scorePill}>
+                  <Text style={styles.scorePillLabel}>Progreso</Text>
+                  <Text style={styles.scorePillValue}>
+                    {correctPlacedCount}/{requiredToWin}
+                  </Text>
+                </View>
+
+                {/* Optional: show remaining seconds as 0 / original */}
+                <View style={styles.scorePill}>
+                  <Text style={styles.scorePillLabel}>Tiempo</Text>
+                  <Text style={styles.scorePillValue}>
+                    {status === "lose" ? "0s" : `${GAME_RULES.seconds -secondsLeft}s`}
+                  </Text>
+                </View>
+              </View>
+
+              <View
+                style={[
+                  styles.overlayPill,
+                  status === "win" ? styles.pillWin : styles.pillLose,
+                ]}
+              >
+                <Text style={styles.overlayPillText}>
+                  {status === "win" ? "¡Excelente!" : "Reiniciando..."}
+                </Text>
+              </View>
+            </Animated.View>
+          </View>
+        )}
+
+        {/* Debug button (optional) */}
+        <Pressable style={styles.resetBtn} onPress={newRound}>
+          <Text style={styles.resetText}>Reiniciar</Text>
+        </Pressable>
+      </ImageBackground>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#fff" },
-  topBar: {
-    height: 64,
-    paddingHorizontal: 20,
+  bg: { flex: 1, width: "100%", height: "100%" },
+
+  header: {
+    paddingTop: 34,
+    paddingHorizontal: 22,
+    paddingBottom: 10,
+    alignItems: "center",
+  },
+  title: {
+    fontSize: 52,
+    fontWeight: "900",
+    color: "#111",
+    textAlign: "center",
+    letterSpacing: 1,
+  },
+  statsRow: {
+    marginTop: 700,
     flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+    gap: 14,
   },
-  topText: { fontSize: 22, fontWeight: "700" },
-
-  mapWrap: { 
-    flex: 1, 
-    paddingHorizontal: 18 
-  },
-  mapBg: { flex: 1, justifyContent: "center", alignItems: "center", width: '100%', height: '100%'},
-
-  tray: {
-    height: 220,
-    borderTopWidth: 2,
-    borderColor: "#eee",
-    justifyContent: "center",
+  statPill: {
+    minWidth: 170,
+    //backgroundColor: "rgba(255,255,255,0.85)",
+    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
     alignItems: "center",
   },
-  trayTitle: { fontSize: 18, color: "#666" },
+  statLabel: { fontSize: 13, fontWeight: "900", color: "#444" },
+  statValue: { fontSize: 28, fontWeight: "900", color: "#111", marginTop: 2 },
+
+  mapArea: {
+    flex: 1,
+    marginHorizontal: 18,
+  },
+
+  gridPanel: {
+    height: 900,
+    marginHorizontal: 18,
+    marginBottom: 18,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.00)", // keep transparent if background already has it
+    // If you want a panel like the reference, uncomment:
+    // backgroundColor: "rgba(255,255,255,0.80)",
+    // borderWidth: 2,
+    // borderColor: "rgba(0,0,0,0.08)",
+  },
+
+  gridSlot: {
+    borderRadius: 18,
+    //borderWidth: 6,
+    backgroundColor: "rgba(255,255,255,0.0)",
+  },
 
   photo: {
     position: "absolute",
-    borderRadius: 16,
+    borderRadius: 18,
     overflow: "hidden",
-    elevation: 6,
+    elevation: 4,
   },
   photoImg: { width: "100%", height: "100%", resizeMode: "cover" },
 
@@ -393,12 +618,124 @@ const styles = StyleSheet.create({
 
   overlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.65)",
+    backgroundColor: "rgba(0,0,0,0.55)",
     justifyContent: "center",
     alignItems: "center",
+    padding: 24,
   },
-  overlayText: { fontSize: 54, color: "white", fontWeight: "900" },
-  overlaySub: { fontSize: 20, color: "white", marginTop: 10 },
+
+  overlayCard: {
+    width: "100%",
+    maxWidth: 560,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    borderRadius: 28,
+    paddingVertical: 28,
+    paddingHorizontal: 26,
+    alignItems: "center",
+    elevation: 14,
+    borderWidth: 2,
+    borderColor: "rgba(0,0,0,0.06)",
+  },
+
+  overlayBadge: {
+    width: 92,
+    height: 92,
+    borderRadius: 46,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 14,
+    borderWidth: 6,
+  },
+
+  badgeWin: {
+    backgroundColor: "rgba(46, 204, 113, 0.16)",
+    borderColor: "rgba(46, 204, 113, 0.45)",
+  },
+
+  badgeLose: {
+    backgroundColor: "rgba(52, 152, 219, 0.16)",
+    borderColor: "rgba(52, 152, 219, 0.45)",
+  },
+
+  overlayBadgeIcon: {
+    fontSize: 52,
+    fontWeight: "900",
+    color: "#111",
+    marginTop: -2,
+  },
+
+  overlayTitle: {
+    fontSize: 44,
+    fontWeight: "900",
+    color: "#111",
+    textAlign: "center",
+    letterSpacing: 0.5,
+  },
+
+  overlayMessage: {
+    marginTop: 8,
+    fontSize: 18,
+    fontWeight: "700",
+    color: "rgba(0,0,0,0.65)",
+    textAlign: "center",
+    lineHeight: 24,
+    paddingHorizontal: 10,
+  },
+
+  scoreRow: {
+    marginTop: 16,
+    flexDirection: "row",
+    gap: 12,
+  },
+
+  scorePill: {
+    minWidth: 160,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.75)",
+    borderWidth: 2,
+    borderColor: "rgba(0,0,0,0.08)",
+    alignItems: "center",
+  },
+
+  scorePillLabel: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "rgba(0,0,0,0.55)",
+    letterSpacing: 0.4,
+  },
+
+  scorePillValue: {
+    marginTop: 2,
+    fontSize: 24,
+    fontWeight: "900",
+    color: "#111",
+  },
+
+  overlayPill: {
+    marginTop: 18,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 999,
+    borderWidth: 2,
+  },
+
+  pillWin: {
+    backgroundColor: "rgba(46, 204, 113, 0.14)",
+    borderColor: "rgba(46, 204, 113, 0.35)",
+  },
+
+  pillLose: {
+    backgroundColor: "rgba(52, 152, 219, 0.14)",
+    borderColor: "rgba(52, 152, 219, 0.35)",
+  },
+
+  overlayPillText: {
+    fontSize: 16,
+    fontWeight: "900",
+    color: "#111",
+  },
 
   resetBtn: {
     position: "absolute",
@@ -408,7 +745,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 12,
-    opacity: 0.2, // keep subtle
+    opacity: 0.2,
   },
   resetText: { color: "white", fontWeight: "700" },
 });
