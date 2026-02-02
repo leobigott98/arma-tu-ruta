@@ -574,8 +574,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     alignItems: "center",
   },
-  statLabel: { fontSize: 13, fontWeight: "900", color: "#444" },
-  statValue: { fontSize: 28, fontWeight: "900", color: "#111", marginTop: 2 },
+  statLabel: { fontSize: 20, fontWeight: "900", color: "#444" },
+  statValue: { fontSize: 50, fontWeight: "900", color: "#111", marginTop: 2 },
 
   mapArea: {
     flex: 1,
