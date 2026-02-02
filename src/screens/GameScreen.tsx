@@ -81,42 +81,95 @@ const BORDER_COLORS = [
   "#8E44AD",
 ];
 
+const MAP_SCALE = 0.50;
+
 function DraggablePhoto(props: {
   item: PhotoItem;
   size: number;
   startPos: { x: number; y: number };
   disabled: boolean;
+  placed: boolean; // NEW
+  mapScale?: number; // NEW
   onDrop: (
     item: PhotoItem,
     center: { x: number; y: number },
-    size: number,
     reset: () => void,
     snapTo: (x: number, y: number) => void,
   ) => void;
 }) {
-  const { item, size, startPos, disabled, onDrop } = props;
+  const {
+    item,
+    size,
+    startPos,
+    disabled,
+    onDrop,
+    placed,
+    mapScale = MAP_SCALE,
+  } = props;
 
   const pan = useRef(
     new Animated.ValueXY({ x: startPos.x, y: startPos.y }),
   ).current;
+  const scale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
+    // New round: reset position + scale
     pan.setValue({ x: startPos.x, y: startPos.y });
+    scale.setValue(1);
   }, [startPos.x, startPos.y]);
 
+  useEffect(() => {
+    // When the item becomes placed, animate scale down (shrink-on-drop)
+    // When it becomes unplaced (new round), animate back to full size
+    if (placed) {
+      // ✅ "snap + bounce" on drop (scale overshoot then settle)
+      Animated.sequence([
+        Animated.spring(scale, {
+          toValue: mapScale * 1.08,
+          useNativeDriver: false,
+          friction: 6,
+          tension: 140,
+        }),
+        Animated.spring(scale, {
+          toValue: mapScale,
+          useNativeDriver: false,
+          friction: 7,
+          tension: 120,
+        }),
+      ]).start();
+    } else {
+      Animated.spring(scale, {
+        toValue: 1,
+        useNativeDriver: false,
+        friction: 7,
+        tension: 110,
+      }).start();
+    }
+  }, [placed, mapScale]);
+
   const reset = () => {
-    Animated.spring(pan, {
-      toValue: { x: startPos.x, y: startPos.y },
-      useNativeDriver: false,
-      friction: 6,
-    }).start();
+    Animated.parallel([
+      Animated.spring(pan, {
+        toValue: { x: startPos.x, y: startPos.y },
+        useNativeDriver: false,
+        friction: 6,
+      }),
+      Animated.spring(scale, {
+        toValue: 1,
+        useNativeDriver: false,
+        friction: 7,
+        tension: 90,
+      }),
+    ]).start();
   };
 
   const snapTo = (x: number, y: number) => {
+    // Snap position; scale is handled by placed state (setPlaced in GameScreen)
     Animated.spring(pan, {
       toValue: { x, y },
       useNativeDriver: false,
-      friction: 7,
+      friction: 5, // lower = bouncier
+      tension: 140, // higher = snappier
     }).start();
   };
 
@@ -139,28 +192,26 @@ function DraggablePhoto(props: {
           const y = (pan.y as any)._value;
           const center = { x: x + size / 2, y: y + size / 2 };
 
-          onDrop(item, center, size, reset, snapTo);
+          onDrop(item, center, reset, snapTo);
         },
       }),
     [disabled, item.id, size, startPos.x, startPos.y],
   );
 
   return (
-    <Animated.View
-      style={[
-        styles.photo,
-        {
-          width: size,
-          height: size,
-          transform: pan.getTranslateTransform(),
-          opacity: disabled ? 0.92 : 1,
-        },
-      ]}
-      {...responder.panHandlers}
-    >
+  <Animated.View
+    style={[
+      styles.photo,
+      { width: size, height: size, transform: pan.getTranslateTransform(), borderWidth: 0, elevation: 0 }
+    ]}
+    {...responder.panHandlers}
+  >
+    <Animated.View style={{ width: "100%", height: "100%", transform: [{ scale }] }}>
       <Image source={item.source} style={styles.photoImg} />
     </Animated.View>
-  );
+  </Animated.View>
+);
+
 }
 
 export default function GameScreen(props: { onExitToStart: () => void }) {
@@ -190,13 +241,13 @@ export default function GameScreen(props: { onExitToStart: () => void }) {
         Animated.timing(overlayAnim, {
           toValue: 1,
           duration: 180,
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
         Animated.spring(overlayAnim, {
           toValue: 1,
           friction: 6,
           tension: 90,
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
       ]).start();
     }
@@ -318,7 +369,6 @@ export default function GameScreen(props: { onExitToStart: () => void }) {
   const handleDrop = (
     item: PhotoItem,
     center: { x: number; y: number },
-    size: number,
     reset: () => void,
     snapTo: (x: number, y: number) => void,
   ) => {
@@ -346,7 +396,12 @@ export default function GameScreen(props: { onExitToStart: () => void }) {
     const isCorrect = item.landmarkId === hit.id;
 
     if (isCorrect) {
-      snapTo(hit.tx - size / 2, hit.ty - size / 2);
+      const baseSize = slotSizeById.get(item.id) ?? 160;
+
+      // Center the scaled image on the target
+      snapTo(hit.tx - baseSize / 2, hit.ty - baseSize / 2);
+
+      // This triggers the scale animation inside DraggablePhoto
       setPlaced((prev) => ({
         ...prev,
         [item.id]: { placed: true, lockedTo: hit!.id },
@@ -354,6 +409,7 @@ export default function GameScreen(props: { onExitToStart: () => void }) {
       return;
     }
 
+    // Wrong target → mistake + reset (and scale back to 1)
     setMistakesLeft((m) => {
       const next = m - 1;
       if (next <= 0) setStatus("lose");
@@ -460,6 +516,8 @@ export default function GameScreen(props: { onExitToStart: () => void }) {
               size={slotSizeById.get(p.id) ?? 160}
               startPos={startPositions[p.id] ?? { x: 0, y: 0 }}
               disabled={status !== "playing" || placed[p.id]?.placed}
+              placed={!!placed[p.id]?.placed} // NEW
+              mapScale={0.72} // NEW (tweak: 0.70–0.80)
               onDrop={handleDrop}
             />
           ))}
@@ -516,7 +574,9 @@ export default function GameScreen(props: { onExitToStart: () => void }) {
                 <View style={styles.scorePill}>
                   <Text style={styles.scorePillLabel}>Tiempo</Text>
                   <Text style={styles.scorePillValue}>
-                    {status === "lose" ? "0s" : `${GAME_RULES.seconds -secondsLeft}s`}
+                    {status === "lose"
+                      ? "0s"
+                      : `${GAME_RULES.seconds - secondsLeft}s`}
                   </Text>
                 </View>
               </View>

@@ -4,12 +4,10 @@
     "slug": "arma-tu-ruta",
     "version": "1.0.0",
     "orientation": "portrait",
-    //"icon": "./assets/icon.png",
     "icon": "./assets/icon_v2.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      //"image": "./assets/splash-icon.png",
       "image": "./assets/icon_v2.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
@@ -19,18 +17,23 @@
     },
     "android": {
       "adaptiveIcon": {
-        //"foregroundImage": "./assets/adaptive-icon.png",
         "foregroundImage": "./assets/icon_v2.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.leo.a.bigott.armaturuta"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-build-properties"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "9a7e4277-96d6-43ef-8c26-9bfe5ea84152"
+      }
+    }
   }
 }
