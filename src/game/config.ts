@@ -18,16 +18,16 @@ export type PhotoItem = {
 
 export const LANDMARKS: Landmark[] = [
   // TODO: you will fill these with real positions
-  { id: "l1", x: 0.3457, y: 0.0444, radius: 0.06 }, // los caobos
-  { id: "l2", x: 0.2118, y: 0.0119, radius: 0.06 }, // el silencio
-  { id: "l3", x: 0.0446, y: 0.2654, radius: 0.06 }, // la paz
-  { id: "l4", x: 0.0342, y: 0.3955, radius: 0.06 }, // redoma la india
-  { id: "l5", x: 0.2953, y: 0.4486, radius: 0.06 }, // los proceres
-  { id: "l6", x: 0.5223, y: 0.2654, radius: 0.06 }, // los chaguaramos
-  { id: "l7", x: 0.585, y: 0.3407, radius: 0.06 }, // las mercedes
-  { id: "l8", x: 0.6961, y: 0.3235, radius: 0.06 }, // hotel eurobuilding
-  { id: "l9", x: 0.8053, y: 0.0769, radius: 0.06 }, // parque del este
-  { id: "l10", x: 0.6543, y: 0.0975, radius: 0.06 }, // altamira
+  { id: "l1", x: 0.3392, y: 0.0163, radius: 0.08 }, // los caobos
+  { id: "l2", x: 0.2027, y: 0.0013, radius: 0.08 }, // el silencio
+  { id: "l3", x: 0.0313, y: 0.2499, radius: 0.10 }, // la paz
+  { id: "l4", x: 0.0233, y: 0.4048, radius: 0.10 }, // redoma la india
+  { id: "l5", x: 0.2847, y: 0.4634, radius: 0.08 }, // los proceres
+  { id: "l6", x: 0.523, y: 0.2549, radius: 0.08 }, // los chaguaramos
+  { id: "l7", x: 0.5837, y: 0.3345, radius: 0.08 }, // las mercedes
+  { id: "l8", x: 0.6965, y: 0.3253, radius: 0.08 }, // hotel eurobuilding
+  { id: "l9", x: 0.8083, y: 0.0607, radius: 0.08 }, // parque del este
+  { id: "l10", x: 0.6595, y: 0.0749, radius: 0.08 }, // altamira
 ];
 
 export const PHOTOS: PhotoItem[] = [
@@ -45,8 +45,8 @@ export const PHOTOS: PhotoItem[] = [
 ];
 
 export const GAME_RULES = {
-  seconds: 25,    // time per round
+  seconds: 15,    // time per round
   maxMistakes: Infinity, // no limit
-  showCount: 8,      // 5 photos displayed
-  requiredCorrect: 5 // win condition
+  showCount: 8,      // photos displayed
+  requiredCorrect: 5, // win condition
 };

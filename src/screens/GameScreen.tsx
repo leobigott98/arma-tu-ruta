@@ -254,7 +254,7 @@ export default function GameScreen(props: { onExitToStart: () => void }) {
   }, [status]);
 
   // Debug tap-to-log coords inside map area
-  const DEBUG_PICK_TARGETS = true;
+  const DEBUG_PICK_TARGETS = false;
 
   const newRound = () => {
     const count = Math.max(1, Math.min(GAME_RULES.showCount, PHOTOS.length));
@@ -305,7 +305,7 @@ export default function GameScreen(props: { onExitToStart: () => void }) {
 
   useEffect(() => {
     if (status === "win" || status === "lose") {
-      const timeout = setTimeout(() => onExitToStart(), 5000);
+      const timeout = setTimeout(() => onExitToStart(), 4000);
       return () => clearTimeout(timeout);
     }
   }, [status, onExitToStart]);
@@ -580,7 +580,9 @@ export default function GameScreen(props: { onExitToStart: () => void }) {
                   </Text>
                 </View>
               </View>
-
+            <Pressable
+              onPress={onExitToStart}
+            >
               <View
                 style={[
                   styles.overlayPill,
@@ -591,6 +593,9 @@ export default function GameScreen(props: { onExitToStart: () => void }) {
                   {status === "win" ? "¡Excelente!" : "Reiniciando..."}
                 </Text>
               </View>
+
+            </Pressable>
+              
             </Animated.View>
           </View>
         )}
@@ -622,20 +627,20 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   statsRow: {
-    marginTop: 700,
+    marginTop: 320,
     flexDirection: "row",
-    gap: 14,
+    gap: 5,
   },
   statPill: {
-    minWidth: 170,
+    minWidth: 150,
     //backgroundColor: "rgba(255,255,255,0.85)",
     borderRadius: 16,
     paddingVertical: 10,
     paddingHorizontal: 14,
     alignItems: "center",
   },
-  statLabel: { fontSize: 20, fontWeight: "900", color: "#444" },
-  statValue: { fontSize: 50, fontWeight: "900", color: "#111", marginTop: 2 },
+  statLabel: { fontSize: 10, fontWeight: "900", color: "#444" },
+  statValue: { fontSize: 30, fontWeight: "900", color: "#111", marginTop: 0 },
 
   mapArea: {
     flex: 1,
@@ -643,7 +648,7 @@ const styles = StyleSheet.create({
   },
 
   gridPanel: {
-    height: 900,
+    height: 450,
     marginHorizontal: 18,
     marginBottom: 18,
     borderRadius: 22,
